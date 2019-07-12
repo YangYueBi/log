@@ -24,7 +24,7 @@ func NewLog() *MyLog {
 func (this *MyLog) Init(path string) bool {
 	if this.bInit == true {
 		fmt.Println("对象已经初始化过")
-		return false
+		return true
 	}
 
 	//获取当前目录
