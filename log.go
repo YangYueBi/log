@@ -5,135 +5,12 @@ import (
 	"fmt"
 	"github.com/cihub/seelog"
 	"io/ioutil"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
-
-//----------------------------日志的参数------------------------------------------------------
-type LogConst struct {
-	ServerID       string    `服务id，初始化时传入的国标id`
-	ProcessID      string    `过程id，数据外壳中包含`
-	ProcessType    string    `过程类型，文档中`
-	AcessType      string    `接入类型，目前未知`
-	DataType       string    `数据类型，数据外壳中`
-	VendorID       string    `厂商ID，目前未知`
-	DeviceID       string    `设备ID，目前未知`
-	SourceDataID   string    `源数据ID，目前未知`
-	DestineDataID  string    `目的数据id，目前未知`
-	SourceDataTime time.Time `源数据时间`
-	ExceptionType  string    `异常类型`
-}
-
-const (
-	//数据类型
-	MotorVehicle, Face, Person, NonMotorVehicle string = "01", "02", "03", "04"
-	//操作码
-	Stop, Start, Regiest, UnResiest, Subscribtion, Disposition, Query, Configuration string = "100", "101", "102", "103", "104", "105", "106", "107"
-	//状态吗
-	Normal, Exception, Online, Offline string = "200", "201", "202", "203"
-	//过程类型
-	Transform, DataClean, DicConversion, StrConversion, Acess, OutPut string = "1001", "1002", "1003", "1004", "1005", "1006"
-	//接入类型
-	GAT1400Acess, HikiSdk, DahuaSdk, OrcAcess, MySqlAcess, FtpAcess, KafkaAcess string = "1101", "1102", "1103", "1104", "1105", "1106", "1107"
-	//异常类型
-	TransFailed, DataCleanFailed, DicConvtFailed, StrConvtFailed, KafkaProFailed, LoadFailed, OutputFailed string = "1201", "1202", "1203", "1204", "1205", "1206", "1207"
-)
-
-type StruLog struct {
-	OperationFileName, StatusFileName, DataFileName, ErrorDataFileName, DebugFileName string
-}
-
-type Logger struct {
-	//param     StruLog
-	Operation *MyLog
-	Status    *MyLog
-	Data      *MyLog
-	ErrorData *MyLog
-	Debug     *MyLog
-}
-
-func NewLogger(param StruLog) *Logger {
-	var operate, status, data, error, debug *MyLog = nil, nil, nil, nil, nil
-	if param.OperationFileName != "" {
-		operate = NewLog()
-		if !operate.Init(getCurrentName() + "/" + param.OperationFileName) {
-			fmt.Println("初始化操作日志对象失败")
-			return nil
-		}
-	} else {
-		fmt.Println("初始化操作日志对象成功")
-	}
-	if param.StatusFileName != "" {
-		status = NewLog()
-		if !status.Init(getCurrentName() + "/" + param.StatusFileName) {
-			fmt.Println("初始化状态日志对象失败")
-			return nil
-		}
-	} else {
-		fmt.Println("初始化状态日志对象成功")
-	}
-	if param.DataFileName != "" {
-		data = NewLog()
-		if !data.Init(getCurrentName() + "/" + param.DataFileName) {
-			fmt.Println("初始化数据日志对象失败")
-			return nil
-		}
-	} else {
-		fmt.Println("初始化数据日志对象成功")
-	}
-	if param.ErrorDataFileName != "" {
-		error = NewLog()
-		if !error.Init(getCurrentName() + "/" + param.ErrorDataFileName) {
-			fmt.Println("初始化错误日志对象失败")
-			return nil
-		}
-	} else {
-		fmt.Println("初始化错误日志对象成功")
-	}
-	if param.DebugFileName != "" {
-		debug = NewLog()
-		if !debug.Init(getCurrentName() + "/" + param.DebugFileName) {
-			fmt.Println("初始化Debug日志对象失败")
-			return nil
-		}
-	} else {
-		fmt.Println("初始化Debug日志对象成功")
-	}
-
-	//所有的日志对象完成初始化，启动修改日志对象的接口
-	go startListen()
-	return &Logger{operate, status, data, error, debug}
-}
-func (this *Logger) Flush() {
-	this.Operation.Flush()
-	this.Status.Flush()
-	this.Data.Flush()
-	this.ErrorData.Flush()
-	this.Debug.Flush()
-}
-
-func startListen() bool {
-	http.HandleFunc("/alter", alterLevel)
-	addr := "0.0.0.0:44444"
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		fmt.Printf("Rest监听 %s 失败，错误：%v", addr, err)
-		return false
-	} else {
-		fmt.Printf("Rest监听 %s 成功", addr)
-		return true
-	}
-}
-
-func alterLevel(w http.ResponseWriter, r *http.Request) {
-
-}
-
-//===============================================================
 
 type MyLog struct {
 	bInit bool                   //是否初始化
@@ -150,19 +27,14 @@ func (this *MyLog) Init(path string) bool {
 		return false
 	}
 
-	//读取环境变量下的配置文件  D:\ICV_ROOT
-	icvRoot := os.Getenv("ICV_ROOT")
-	if icvRoot == "" {
-		fmt.Println("获取ICV_ROOT的环境变量失败")
+	//获取当前目录
+	proName := getFullPath()
+	if proName == "" {
+		fmt.Println("获取当前目录失败")
 		return false
 	}
-	fmt.Println("获取ICV_ROOT的环境变量成功")
-
-	icvRoot = strings.Replace(icvRoot, "\\", "/", -1)
-	//替换//为/
-	path = strings.Replace(path, "\\", "/", -1)
 	//读取配置文件
-	logCfgPath := icvRoot + "/Config/GoLogConfig.xml"
+	logCfgPath := proName + "/logcfg.xml"
 	var ok bool = false
 	cfg, ok := readCfg(logCfgPath)
 	if !ok {
@@ -172,7 +44,7 @@ func (this *MyLog) Init(path string) bool {
 	fmt.Println("读取配置文件成功")
 
 	//创建GoLog文件夹
-	goLog := icvRoot + "/GoLog"
+	goLog := proName + "/log"
 	if err := os.MkdirAll(goLog, os.ModePerm); err != nil {
 		fmt.Println("创建goLog文件夹失败")
 		return false
@@ -191,7 +63,7 @@ func (this *MyLog) Init(path string) bool {
 			allFolder = allFolder + "/" + folder
 		}
 	}
-	if err := os.MkdirAll(goLog+allFolder, 0711); err != nil {
+	if err := os.MkdirAll(goLog+allFolder, 0666); err != nil {
 		fmt.Printf("创建文件夹%s失败", goLog+allFolder)
 		return false
 	}
@@ -248,7 +120,7 @@ func (this *MyLog) Init(path string) bool {
 	cfgByte := generateCfgXml(cfgStr{Filename: logFolder, Maxrolls: maxrolls, Maxsize: maxsize, Level: level}, bConsole)
 	if cfgByte != nil {
 		var err error
-		fmt.Printf("配置信息是：%s", string(cfgByte))
+		//fmt.Printf("配置信息是：%s", string(cfgByte))
 		this.log, err = seelog.LoggerFromConfigAsBytes(cfgByte)
 		if err != nil {
 			this.bInit = false
@@ -266,6 +138,10 @@ func (this *MyLog) Init(path string) bool {
 	}
 	return true
 }
+func (this MyLog) Printf(format string, params ...interface{}) {
+	this.log.Warnf(format, params...)
+}
+
 func (this *MyLog) Flush() {
 	if this == nil {
 		return
@@ -475,34 +351,20 @@ func generateCfgXml(cfgInfo cfgStr, bConsole bool) []byte {
 	}
 }
 
-//===============================================================
-func getCurrentDirectory() string {
-	file, err := exec.LookPath(os.Args[0])
-	if err != nil {
+func getFullPath() string {
+	exec, _ := filepath.Abs(filepath.Base(os.Args[0]))
+	switch strOs := runtime.GOOS; strOs {
+	case "windows":
+		{
+			pos := strings.LastIndex(exec, "\\")
+			return exec[0:pos]
+		}
+	case "linux":
+		{
+			pos := strings.LastIndex(exec, "/")
+			return exec[0:pos]
+		}
+	default:
 		return ""
 	}
-	path, err := filepath.Abs(file)
-	if err != nil {
-		return ""
-	}
-	i := strings.LastIndex(path, "/")
-	if i < 0 {
-		i = strings.LastIndex(path, "\\")
-	}
-	if i < 0 {
-		return ""
-	}
-	return string(path[0 : i+1])
-}
-
-func getCurrentName() string {
-	file, err := exec.LookPath(os.Args[0])
-	if err != nil {
-		return ""
-	}
-	path, err := filepath.Abs(file)
-	if err != nil {
-		return ""
-	}
-	return strings.Split(filepath.Base(path), ".")[0]
 }
